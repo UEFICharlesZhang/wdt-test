@@ -1,18 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- *	SoftDog:	A Software Watchdog Device
- *
- *	(c) Copyright 1996 Alan Cox <alan@lxorguk.ukuu.org.uk>,
- *							All Rights Reserved.
- *
- *	Neither Alan Cox nor CymruNet Ltd. admit liability nor provide
- *	warranty for any of this software. This material is provided
- *	"AS-IS" and at no charge.
- *
- *	(c) Copyright 1995    Alan Cox <alan@lxorguk.ukuu.org.uk>
- *
- *	Software only watchdog driver. Unlike its big brother the WDT501P
- *	driver this won't always recover a failed machine.
+ *	TestDog:	A Test Watchdog Device
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -61,114 +49,53 @@ module_param(soft_active_on_boot, bool, 0000);
 MODULE_PARM_DESC(soft_active_on_boot,
 	"Set to true to active Softdog on boot (default=false)");
 
-static struct hrtimer softdog_ticktock;
-static struct hrtimer softdog_preticktock;
-
-static int reboot_kthread_fn(void *data)
+static int timeleft;
+static int softdog_start(struct watchdog_device *w)
 {
-	kernel_restart(soft_reboot_cmd);
-	return -EPERM; /* Should not reach here */
-}
-
-static void reboot_work_fn(struct work_struct *unused)
-{
-	kthread_run(reboot_kthread_fn, NULL, "softdog_reboot");
-}
-
-static enum hrtimer_restart softdog_fire(struct hrtimer *timer)
-{
-	static bool soft_reboot_fired;
-
-	module_put(THIS_MODULE);
-	if (soft_noboot) {
-		pr_crit("Triggered - Reboot ignored\n");
-	} else if (soft_panic) {
-		pr_crit("Initiating panic\n");
-		panic("Software Watchdog Timer expired");
-	} else {
-		pr_crit("Initiating system reboot\n");
-		if (!soft_reboot_fired && soft_reboot_cmd != NULL) {
-			static DECLARE_WORK(reboot_work, reboot_work_fn);
-			/*
-			 * The 'kernel_restart' is a 'might-sleep' operation.
-			 * Also, executing it in system-wide workqueues blocks
-			 * any driver from using the same workqueue in its
-			 * shutdown callback function. Thus, we should execute
-			 * the 'kernel_restart' in a standalone kernel thread.
-			 * But since starting a kernel thread is also a
-			 * 'might-sleep' operation, so the 'reboot_work' is
-			 * required as a launcher of the kernel thread.
-			 *
-			 * After request the reboot, restart the timer to
-			 * schedule an 'emergency_restart' reboot after
-			 * 'TIMER_MARGIN' seconds. It's because if the softdog
-			 * hangs, it might be because of scheduling issues. And
-			 * if that is the case, both 'schedule_work' and
-			 * 'kernel_restart' may possibly be malfunctional at the
-			 * same time.
-			 */
-			soft_reboot_fired = true;
-			schedule_work(&reboot_work);
-			hrtimer_add_expires_ns(timer,
-					(u64)TIMER_MARGIN * NSEC_PER_SEC);
-
-			return HRTIMER_RESTART;
-		}
-		emergency_restart();
-		pr_crit("Reboot didn't ?????\n");
-	}
-
-	return HRTIMER_NORESTART;
-}
-
-static struct watchdog_device softdog_dev;
-
-static enum hrtimer_restart softdog_pretimeout(struct hrtimer *timer)
-{
-	watchdog_notify_pretimeout(&softdog_dev);
-
-	return HRTIMER_NORESTART;
-}
-
-static int softdog_ping(struct watchdog_device *w)
-{
-	if (!hrtimer_active(&softdog_ticktock))
-		__module_get(THIS_MODULE);
-	hrtimer_start(&softdog_ticktock, ktime_set(w->timeout, 0),
-		      HRTIMER_MODE_REL);
-
-	if (IS_ENABLED(CONFIG_SOFT_WATCHDOG_PRETIMEOUT)) {
-		if (w->pretimeout)
-			hrtimer_start(&softdog_preticktock,
-				      ktime_set(w->timeout - w->pretimeout, 0),
-				      HRTIMER_MODE_REL);
-		else
-			hrtimer_cancel(&softdog_preticktock);
-	}
-
+    printk(KERN_ERR "softdog_start\n");
+	timeleft = soft_margin;
 	return 0;
 }
 
 static int softdog_stop(struct watchdog_device *w)
 {
-	if (hrtimer_cancel(&softdog_ticktock))
-		module_put(THIS_MODULE);
-
-	if (IS_ENABLED(CONFIG_SOFT_WATCHDOG_PRETIMEOUT))
-		hrtimer_cancel(&softdog_preticktock);
-
+	printk(KERN_ERR "softdog_stop\n");
 	return 0;
 }
 
+static int softdog_ping(struct watchdog_device *wdt_dev)
+{
+	printk(KERN_ERR "softdog_ping\n");
+	return 0;
+}
+
+
+static int softdog_set_timeout(struct watchdog_device *wdt_dev,
+		unsigned int timeout)
+{
+	printk(KERN_ERR "softdog_set_timeout:%d\n",timeout);
+	soft_margin=timeout;
+	return 0;
+}
+
+static unsigned int softdog_get_timeleft(struct watchdog_device *wdd)
+{
+	printk(KERN_ERR "softdog_get_timeleft:%d\n",timeleft--);
+	return timeleft;
+}
+
 static struct watchdog_info softdog_info = {
-	.identity = "Software Watchdog",
+	.identity = "Test Watchdog",
 	.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
 };
 
 static const struct watchdog_ops softdog_ops = {
 	.owner = THIS_MODULE,
-	.start = softdog_ping,
+	.start = softdog_start,
+	.ping = softdog_ping,
 	.stop = softdog_stop,
+	.set_timeout	= softdog_set_timeout,
+	.get_timeleft	= softdog_get_timeleft,
 };
 
 static struct watchdog_device softdog_dev = {
@@ -187,18 +114,8 @@ static int __init softdog_init(void)
 	watchdog_set_nowayout(&softdog_dev, nowayout);
 	watchdog_stop_on_reboot(&softdog_dev);
 
-	hrtimer_init(&softdog_ticktock, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	softdog_ticktock.function = softdog_fire;
-
-	if (IS_ENABLED(CONFIG_SOFT_WATCHDOG_PRETIMEOUT)) {
-		softdog_info.options |= WDIOF_PRETIMEOUT;
-		hrtimer_init(&softdog_preticktock, CLOCK_MONOTONIC,
-			     HRTIMER_MODE_REL);
-		softdog_preticktock.function = softdog_pretimeout;
-	}
-
 	if (soft_active_on_boot)
-		softdog_ping(&softdog_dev);
+		softdog_start(&softdog_dev);
 
 	ret = watchdog_register_device(&softdog_dev);
 	if (ret)
@@ -219,7 +136,7 @@ static void __exit softdog_exit(void)
 }
 module_exit(softdog_exit);
 
-MODULE_AUTHOR("Alan Cox");
-MODULE_DESCRIPTION("Software Watchdog Device Driver");
+MODULE_AUTHOR("Charles Zhang");
+MODULE_DESCRIPTION("Test Watchdog Device Driver");
 MODULE_LICENSE("GPL");
 
