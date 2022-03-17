@@ -5,7 +5,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/hrtimer.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -63,11 +62,11 @@ static int softdog_stop(struct watchdog_device *w)
 	return 0;
 }
 
-static int softdog_ping(struct watchdog_device *wdt_dev)
-{
-	printk(KERN_ERR "softdog_ping\n");
-	return 0;
-}
+// static int softdog_ping(struct watchdog_device *wdt_dev)
+// {
+// 	printk(KERN_ERR "softdog_ping\n");
+// 	return 0;
+// }
 
 
 static int softdog_set_timeout(struct watchdog_device *wdt_dev,
@@ -80,19 +79,24 @@ static int softdog_set_timeout(struct watchdog_device *wdt_dev,
 
 static unsigned int softdog_get_timeleft(struct watchdog_device *wdd)
 {
-	printk(KERN_ERR "softdog_get_timeleft:%d\n",timeleft--);
+	if (timeleft > 0)
+		timeleft--;
+	else
+		timeleft = 0;
+
+	printk(KERN_ERR "softdog_get_timeleft:%d\n",timeleft);
 	return timeleft;
 }
 
 static struct watchdog_info softdog_info = {
 	.identity = "Test Watchdog",
-	.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
+	.options = WDIOF_SETTIMEOUT | WDIOF_MAGICCLOSE,
 };
 
 static const struct watchdog_ops softdog_ops = {
 	.owner = THIS_MODULE,
 	.start = softdog_start,
-	.ping = softdog_ping,
+	// .ping = softdog_ping,
 	.stop = softdog_stop,
 	.set_timeout	= softdog_set_timeout,
 	.get_timeleft	= softdog_get_timeleft,
